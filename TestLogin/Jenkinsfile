@@ -1,5 +1,57 @@
-﻿@*
-    For more information on enabling MVC for empty projects, visit https://go.microsoft.com/fwlink/?LinkID=397860
-*@
-@{
+﻿pipeline {
+  agent any
+
+  options {
+    timestamps()
+  }
+
+  environment {
+    PUBLISH_DIR = 'publish'
+    LINUX_USER  = 'developer1'
+    LINUX_HOST  = '182.191.122.114'
+    DEPLOY_PATH = '/var/www/simplelogin'
+    SERVICE     = 'simplelogin'
+  }
+
+  stages {
+    stage('Checkout')   { steps { checkout scm } }
+
+    stage('Verify tools') {
+      steps {
+        bat """
+        where dotnet
+        where git
+        where ssh
+        where scp
+        dotnet --info
+        """
+      }
+    }
+
+    stage('Restore')    { steps { bat 'dotnet restore' } }
+    stage('Build')      { steps { bat 'dotnet build -c Release --no-restore' } }
+    stage('Publish')    { steps { bat "dotnet publish -c Release -o %PUBLISH_DIR%" } }
+
+    stage('Deploy to Linux') {
+      steps {
+        sshagent (credentials: ['linux-ssh']) {
+          bat """
+          scp -o StrictHostKeyChecking=no -r %PUBLISH_DIR%/* %LINUX_USER%@%LINUX_HOST%:/tmp/simplelogin/
+
+          ssh -o StrictHostKeyChecking=no %LINUX_USER%@%LINUX_HOST% "sudo mkdir -p %DEPLOY_PATH% && \
+            sudo rsync -a --delete /tmp/simplelogin/ %DEPLOY_PATH%/ && \
+            sudo chown -R www-data:www-data %DEPLOY_PATH% && \
+            sudo systemctl daemon-reload && \
+            sudo systemctl restart %SERVICE% && \
+            sudo systemctl status %SERVICE% --no-pager || true"
+          """
+        }
+      }
+    }
+  }
+
+  post {
+    success { echo '✅ Build & deploy succeeded.' }
+    failure { echo '❌ Build or deploy failed. Check console log.' }
+  }
 }
